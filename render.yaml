@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: pdf-chapter-splitter
+    env: python
+    buildCommand: |
+      apt-get update
+      apt-get install -y qpdf libqpdf-dev
+      pip install --upgrade pip
+      pip install -r requirements.txt
+    startCommand: gunicorn app:app
