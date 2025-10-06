@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PDF Chapter Splitter</title>
+    <link
+      rel="stylesheet"
+      href="{{ url_for('static', filename='style.css') }}"
+    />
+  </head>
+  <body>
+    <div class="container">
+      <header>
+        <h1>📚 PDF Chapter Splitter</h1>
+        <p>Upload a PDF to automatically split it into chapters</p>
+      </header>
+
+      <!-- Upload Section -->
+      <div class="upload-section" id="uploadSection">
+        <div class="upload-area" id="uploadArea">
+          <input type="file" id="fileInput" accept=".pdf" hidden />
+          <div class="upload-icon">📄</div>
+          <h3>Click or drag PDF file here</h3>
+          <p>Maximum file size: 100MB</p>
+          <button
+            class="btn btn-primary"
+            onclick="document.getElementById('fileInput').click()"
+          >
+            Select PDF
+          </button>
+        </div>
+        <div class="progress" id="progressBar" style="display: none">
+          <div class="progress-fill" id="progressFill"></div>
+        </div>
+      </div>
+
+      <!-- Chapter Detection Results -->
+      <div class="results-section" id="resultsSection" style="display: none">
+        <h2>Detected Chapters</h2>
+        <div class="detection-info" id="detectionInfo"></div>
+
+        <div class="chapters-list" id="chaptersList"></div>
+
+        <div class="action-buttons">
+          <button class="btn btn-success" id="splitBtn" onclick="splitPDF()">
+            ✂️ Split into Chapters
+          </button>
+          <button class="btn btn-secondary" onclick="reset()">
+            🔄 Upload New File
+          </button>
+        </div>
+      </div>
+
+      <!-- Download Section -->
+      <div class="download-section" id="downloadSection" style="display: none">
+        <h2>✅ PDF Split Complete!</h2>
+        <div class="download-list" id="downloadList"></div>
+        <button class="btn btn-secondary" onclick="reset()">
+          Split Another PDF
+        </button>
+      </div>
+    </div>
+
+    <script>
+      let currentFile = null;
+      let detectedChapters = [];
+      let outputDirName = null; // Store directory name globally
+
+      // File upload handlers
+      const fileInput = document.getElementById("fileInput");
+      const uploadArea = document.getElementById("uploadArea");
+
+      fileInput.addEventListener("change", handleFileSelect);
+
+      // Drag and drop
+      uploadArea.addEventListener("dragover", (e) => {
+        e.preventDefault();
+        uploadArea.classList.add("drag-over");
+      });
+
+      uploadArea.addEventListener("dragleave", () => {
+        uploadArea.classList.remove("drag-over");
+      });
+
+      uploadArea.addEventListener("drop", (e) => {
+        e.preventDefault();
+        uploadArea.classList.remove("drag-over");
+        const files = e.dataTransfer.files;
+        if (files.length > 0) {
+          fileInput.files = files;
+          handleFileSelect();
+        }
+      });
+
+      function handleFileSelect() {
+        const file = fileInput.files[0];
+        if (!file) return;
+
+        if (file.type !== "application/pdf") {
+          alert("Please select a PDF file");
+          return;
+        }
+
+        uploadFile(file);
+      }
+
+      async function uploadFile(file) {
+        const formData = new FormData();
+        formData.append("file", file);
+
+        // Show progress
+        document.getElementById("progressBar").style.display = "block";
+        document.getElementById("progressFill").style.width = "50%";
+
+        try {
+          const response = await fetch("/upload", {
+            method: "POST",
+            body: formData,
+          });
+
+          const data = await response.json();
+
+          if (data.error) {
+            alert("Error: " + data.error);
+            return;
+          }
+
+          currentFile = data.filename;
+          detectedChapters = data.chapters;
+
+          displayChapters(data);
+
+          document.getElementById("progressFill").style.width = "100%";
+          setTimeout(() => {
+            document.getElementById("uploadSection").style.display = "none";
+            document.getElementById("resultsSection").style.display = "block";
+          }, 500);
+        } catch (error) {
+          alert("Upload failed: " + error.message);
+        }
+      }
+
+      function displayChapters(data) {
+        const detectionInfo = document.getElementById("detectionInfo");
+        const method =
+          data.detection_method === "bookmarks"
+            ? "🔖 Bookmarks/Outline (Nested)"
+            : "📝 Heading Detection";
+
+        detectionInfo.innerHTML = `
+                <p><strong>Detection Method:</strong> ${method}</p>
+                <p><strong>Chapters Found:</strong> ${data.chapters.length}</p>
+                <p style="color: #666; font-size: 0.9em; margin-top: 10px;">
+                    ${
+                      data.detection_method === "bookmarks"
+                        ? "✓ Extracted all nested chapters (ignoring Parts/Sections)"
+                        : ""
+                    }
+                </p>
+            `;
+
+        const chaptersList = document.getElementById("chaptersList");
+        chaptersList.innerHTML = data.chapters
+          .map((chapter, idx) => {
+            // Show parent context if available
+            const parentInfo = chapter.parent
+              ? `<p style="color: #888; font-size: 0.85em; margin-bottom: 3px;">↳ ${chapter.parent}</p>`
+              : "";
+
+            return `
+                    <div class="chapter-item">
+                        <div class="chapter-number">${chapter.chapter_num}</div>
+                        <div class="chapter-info">
+                            ${parentInfo}
+                            <h4>${chapter.title}</h4>
+                            <p>Pages: ${chapter.start_page + 1} - ${
+              chapter.end_page + 1
+            }</p>
+                        </div>
+                    </div>
+                `;
+          })
+          .join("");
+      }
+
+      async function splitPDF() {
+        const splitBtn = document.getElementById("splitBtn");
+        splitBtn.disabled = true;
+        splitBtn.textContent = "⏳ Splitting...";
+
+        try {
+          const response = await fetch("/split", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              filename: currentFile,
+              chapters: detectedChapters,
+            }),
+          });
+
+          const data = await response.json();
+
+          if (data.error) {
+            alert("Error: " + data.error);
+            splitBtn.disabled = false;
+            splitBtn.textContent = "✂️ Split into Chapters";
+            return;
+          }
+
+          // Store directory name from filename (remove .pdf extension)
+          outputDirName = currentFile.replace(".pdf", "");
+          console.log("✅ Stored directory name:", outputDirName);
+
+          displayDownloads(data.files);
+
+          document.getElementById("resultsSection").style.display = "none";
+          document.getElementById("downloadSection").style.display = "block";
+        } catch (error) {
+          alert("Split failed: " + error.message);
+          splitBtn.disabled = false;
+          splitBtn.textContent = "✂️ Split into Chapters";
+        }
+      }
+
+      function displayDownloads(files) {
+        const downloadList = document.getElementById("downloadList");
+
+        // Use the stored directory name (NOT from file path)
+        const dirname = outputDirName;
+        console.log("📂 Using directory name for ZIP:", dirname);
+
+        // Create Download All button
+        const downloadAllBtn = `
+                <div style="text-align: center; margin-bottom: 30px;">
+                    <a href="/download-all/${dirname}" 
+                       class="btn btn-success" 
+                       style="padding: 15px 40px; font-size: 1.1em; text-decoration: none; display: inline-block;">
+                        📦 Download All Chapters as ZIP
+                    </a>
+                    <p style="color: #666; margin-top: 10px; font-size: 0.9em;">
+                        ${files.length} chapter${
+          files.length > 1 ? "s" : ""
+        } ready • Click to download all as ${dirname}_all_chapters.zip
+                    </p>
+                </div>
+                <hr style="margin: 30px 0; border: none; border-top: 2px solid #e0e0e0;">
+                <h3 style="color: #333; margin-bottom: 20px;">Or download individually:</h3>
+            `;
+
+        downloadList.innerHTML =
+          downloadAllBtn +
+          files
+            .map(
+              (file) => `
+                <div class="download-item">
+                    <div class="file-info">
+                        <h4>${file.title}</h4>
+                        <p>Pages: ${file.pages} • ${file.filename}</p>
+                    </div>
+                    <a href="/download/${file.path}" class="btn btn-download" download>
+                        ⬇️ Download
+                    </a>
+                </div>
+            `
+            )
+            .join("");
+      }
+
+      function reset() {
+        currentFile = null;
+        detectedChapters = [];
+        outputDirName = null;
+        fileInput.value = "";
+
+        document.getElementById("uploadSection").style.display = "block";
+        document.getElementById("resultsSection").style.display = "none";
+        document.getElementById("downloadSection").style.display = "none";
+        document.getElementById("progressBar").style.display = "none";
+        document.getElementById("progressFill").style.width = "0%";
+
+        // Clean up server files
+        fetch("/cleanup", { method: "POST" });
+      }
+    </script>
+  </body>
+</html>
